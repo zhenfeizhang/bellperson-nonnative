@@ -1,30 +1,26 @@
-use rug::Integer;
-use sapling_crypto::bellman::pairing::ff::{Field, PrimeField, PrimeFieldRepr};
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
-use sapling_crypto::circuit::num::AllocatedNum;
+use bellperson::gadgets::num::AllocatedNum;
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
+use ff::PrimeField;
 
 use std::convert::From;
 
 use super::bit::{Bit, Bitvector};
-use super::convert::f_to_nat;
-use super::convert::nat_to_f;
 
 use OptionExt;
 
-pub struct Num<E: Engine> {
-    pub num: LinearCombination<E>,
-    pub value: Option<E::Fr>,
+pub struct Num<Scalar: PrimeField> {
+    pub num: LinearCombination<Scalar>,
+    pub value: Option<Scalar>,
 }
 
-impl<E: Engine> Num<E> {
-    pub fn new(value: Option<E::Fr>, num: LinearCombination<E>) -> Self {
+impl<Scalar: PrimeField> Num<Scalar> {
+    pub fn new(value: Option<Scalar>, num: LinearCombination<Scalar>) -> Self {
         Self { value, num }
     }
     pub fn alloc<CS, F>(mut cs: CS, value: F) -> Result<Self, SynthesisError>
     where
-        CS: ConstraintSystem<E>,
-        F: FnOnce() -> Result<E::Fr, SynthesisError>,
+        CS: ConstraintSystem<Scalar>,
+        F: FnOnce() -> Result<Scalar, SynthesisError>,
     {
         let mut new_value = None;
         let var = cs.alloc(
@@ -44,12 +40,12 @@ impl<E: Engine> Num<E> {
         })
     }
 
-    pub fn fits_in_bits<CS: ConstraintSystem<E>>(
+    pub fn fits_in_bits<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         n_bits: usize,
     ) -> Result<(), SynthesisError> {
-        let mut repr = self.value.map(|v| v.into_repr());
+        let mut repr = self.value.map(|v| v.to_repr());
         // Allocate all but the first bit.
         let bits: Vec<Variable> = (1..n_bits)
             .map(|i| {
@@ -59,9 +55,9 @@ impl<E: Engine> Num<E> {
                         let t = repr.grab_mut()?;
                         t.shr(1);
                         let r = if t.is_odd() {
-                            E::Fr::one()
+                            Scalar::one()
                         } else {
-                            E::Fr::zero()
+                            Scalar::zero()
                         };
                         Ok(r)
                     },
@@ -82,7 +78,7 @@ impl<E: Engine> Num<E> {
         cs.enforce(
             || "last bit",
             |mut lc| {
-                let mut f = E::Fr::one();
+                let mut f = Scalar::one();
                 lc = lc + &self.num;
                 for v in bits.iter() {
                     f.double();
@@ -92,7 +88,7 @@ impl<E: Engine> Num<E> {
             },
             |mut lc| {
                 lc = lc + CS::one();
-                let mut f = E::Fr::one();
+                let mut f = Scalar::one();
                 lc = lc - &self.num;
                 for v in bits.iter() {
                     f.double();
@@ -108,13 +104,13 @@ impl<E: Engine> Num<E> {
     /// Compute the natural number represented by an array of limbs.
     /// The limbs are assumed to be based the `limb_width` power of 2.
     /// Low-index bits are low-order
-    pub fn decompose<CS: ConstraintSystem<E>>(
+    pub fn decompose<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         n_bits: usize,
-    ) -> Result<Bitvector<E>, SynthesisError> {
+    ) -> Result<Bitvector<Scalar>, SynthesisError> {
         let values: Option<Vec<bool>> = self.value.as_ref().map(|v| {
-            let mut num = v.into_repr();
+            let mut num = v.to_repr();
             (0..n_bits)
                 .map(|_| {
                     let bit = num.is_odd();
@@ -123,7 +119,7 @@ impl<E: Engine> Num<E> {
                 })
                 .collect()
         });
-        let allocations: Vec<Bit<E>> = (1..n_bits)
+        let allocations: Vec<Bit<Scalar>> = (1..n_bits)
             .map(|bit_i| {
                 Bit::alloc(
                     cs.namespace(|| format!("bit{}", bit_i)),
@@ -131,7 +127,7 @@ impl<E: Engine> Num<E> {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut f = E::Fr::one();
+        let mut f = Scalar::one();
         let sum_of_tail_bits = allocations
             .iter()
             .fold(LinearCombination::zero(), |lc, bit| {
@@ -145,7 +141,7 @@ impl<E: Engine> Num<E> {
             |lc| lc + CS::one() - &bit0_lc,
             |lc| lc,
         );
-        let bits: Vec<LinearCombination<E>> = std::iter::once(bit0_lc)
+        let bits: Vec<LinearCombination<Scalar>> = std::iter::once(bit0_lc)
             .chain(
                 allocations
                     .into_iter()
@@ -155,10 +151,10 @@ impl<E: Engine> Num<E> {
         Ok(Bitvector { values, bits })
     }
 
-    pub fn as_sapling_allocated_num<CS: ConstraintSystem<E>>(
+    pub fn as_sapling_allocated_num<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
-    ) -> Result<AllocatedNum<E>, SynthesisError> {
+    ) -> Result<AllocatedNum<Scalar>, SynthesisError> {
         let new = AllocatedNum::alloc(cs.namespace(|| "alloc"), || Ok(*self.value.grab()?))?;
         cs.enforce(
             || "eq",
@@ -168,58 +164,10 @@ impl<E: Engine> Num<E> {
         );
         Ok(new)
     }
-
-    pub fn low_k_bits<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        n_bits: usize,
-    ) -> Result<Self, SynthesisError> {
-        self::allocated_num::low_k_bits(
-            self.as_sapling_allocated_num(cs.namespace(|| "alloc"))?,
-            cs.namespace(|| "lowk"),
-            n_bits,
-        )
-    }
 }
 
-pub mod allocated_num {
-    use super::*;
-
-    pub fn low_k_bits<E: Engine, CS: ConstraintSystem<E>>(
-        num: AllocatedNum<E>,
-        mut cs: CS,
-        n_bits: usize,
-    ) -> Result<Num<E>, SynthesisError> {
-        let bits = num.into_bits_le_strict(cs.namespace(|| "decomp"))?;
-        if n_bits > E::Fr::CAPACITY as usize {
-            eprintln!("Too many bits in Num::low_k_bits");
-            return Err(SynthesisError::Unsatisfiable);
-        }
-        let res = Num::alloc(cs.namespace(|| "res"), || {
-            Ok(nat_to_f(&(f_to_nat(num.get_value().grab()?).keep_bits(n_bits as u32))).unwrap())
-        })?;
-        cs.enforce(
-            || "sum",
-            |lc| lc,
-            |lc| lc,
-            |mut lc| {
-                for i in 0..n_bits {
-                    lc = lc
-                        + &bits[i].lc(
-                            CS::one(),
-                            nat_to_f(&(Integer::from(1) << i as u32)).unwrap(),
-                        );
-                }
-                lc = lc - &res.num;
-                lc
-            },
-        );
-        Ok(res)
-    }
-}
-
-impl<E: Engine> From<AllocatedNum<E>> for Num<E> {
-    fn from(a: AllocatedNum<E>) -> Self {
+impl<Scalar: PrimeField> From<AllocatedNum<Scalar>> for Num<Scalar> {
+    fn from(a: AllocatedNum<Scalar>) -> Self {
         Self::new(a.get_value(), LinearCombination::zero() + a.get_variable())
     }
 }

@@ -1,30 +1,30 @@
-use sapling_crypto::bellman::pairing::ff::ScalarEngine;
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::circuit::num::AllocatedNum;
-
-use hash::circuit::CircuitHasher;
+use bellperson::gadgets::num::AllocatedNum;
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
+use ff::PrimeField;
 
 use super::bit::Bit;
 use OptionExt;
 
 pub trait Gadget: Sized + Clone {
-    type E: Engine;
+    type Scalar: PrimeField;
     type Value: Clone;
     type Access: Clone;
     type Params: Clone;
-    fn alloc<CS: ConstraintSystem<Self::E>>(
+    fn alloc<CS: ConstraintSystem<Self::Scalar>>(
         cs: CS,
         value: Option<&Self::Value>,
         access: Self::Access,
         params: &Self::Params,
     ) -> Result<Self, SynthesisError>;
-    fn wires(&self) -> Vec<LinearCombination<Self::E>>;
-    fn wire_values(&self) -> Option<Vec<<Self::E as ScalarEngine>::Fr>>;
+    fn wires(&self) -> Vec<LinearCombination<Self::Scalar>>;
+    fn wire_values(&self) -> Option<Vec<Self::Scalar>>;
     fn value(&self) -> Option<&Self::Value>;
     fn access(&self) -> &Self::Access;
     fn params(&self) -> &Self::Params;
-    fn inputize<CS: ConstraintSystem<Self::E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
+    fn inputize<CS: ConstraintSystem<Self::Scalar>>(
+        &self,
+        mut cs: CS,
+    ) -> Result<(), SynthesisError> {
         let values = self.wire_values();
         for (i, w) in self.wires().into_iter().enumerate() {
             let mut cs = cs.namespace(|| format!("{}", i));
@@ -34,30 +34,10 @@ pub trait Gadget: Sized + Clone {
         Ok(())
     }
 
-    fn inputize_hash<CS: ConstraintSystem<Self::E>, H: CircuitHasher<E = Self::E>>(
+    fn as_nums<CS: ConstraintSystem<Self::Scalar>>(
         &self,
         mut cs: CS,
-        hasher: &H,
-    ) -> Result<AllocatedNum<Self::E>, SynthesisError> {
-        let nums = self.as_nums(cs.namespace(|| "to nums"))?;
-        let hash = hasher.allocate_hash(cs.namespace(|| "hash"), &nums)?;
-        let in_ = cs.alloc_input(
-            || "input",
-            || hash.get_value().ok_or(SynthesisError::AssignmentMissing),
-        )?;
-        cs.enforce(
-            || "eq",
-            |lc| lc,
-            |lc| lc,
-            |lc| lc + in_ - hash.get_variable(),
-        );
-        Ok(hash)
-    }
-
-    fn as_nums<CS: ConstraintSystem<Self::E>>(
-        &self,
-        mut cs: CS,
-    ) -> Result<Vec<AllocatedNum<Self::E>>, SynthesisError> {
+    ) -> Result<Vec<AllocatedNum<Self::Scalar>>, SynthesisError> {
         let wires = self.wires();
         let wire_values = self.wire_values();
         wires
@@ -79,9 +59,9 @@ pub trait Gadget: Sized + Clone {
     }
 
     /// Returns `i0` if `s` is false, otherwise `i1`.
-    fn mux<CS: ConstraintSystem<Self::E>>(
+    fn mux<CS: ConstraintSystem<Self::Scalar>>(
         mut cs: CS,
-        s: &Bit<Self::E>,
+        s: &Bit<Self::Scalar>,
         i0: &Self,
         i1: &Self,
     ) -> Result<Self, SynthesisError> {
@@ -121,9 +101,9 @@ pub trait Gadget: Sized + Clone {
         Ok(out)
     }
     /// Builds a mux tree. The first bit is taken as the highest order.
-    fn mux_tree<'a, CS: ConstraintSystem<Self::E>>(
+    fn mux_tree<'a, CS: ConstraintSystem<Self::Scalar>>(
         mut cs: CS,
-        mut select_bits: impl Iterator<Item = &'a Bit<Self::E>> + Clone,
+        mut select_bits: impl Iterator<Item = &'a Bit<Self::Scalar>> + Clone,
         inputs: &[Self],
     ) -> Result<Self, SynthesisError> {
         if let Some(bit) = select_bits.next() {
@@ -144,9 +124,9 @@ pub trait Gadget: Sized + Clone {
     }
 
     /// Switches `i0` and `i1` iff `s`.
-    fn switch<CS: ConstraintSystem<Self::E>>(
+    fn switch<CS: ConstraintSystem<Self::Scalar>>(
         mut cs: CS,
-        s: &Bit<Self::E>,
+        s: &Bit<Self::Scalar>,
         i0: &Self,
         i1: &Self,
     ) -> Result<(Self, Self), SynthesisError> {
@@ -156,7 +136,7 @@ pub trait Gadget: Sized + Clone {
         Ok((o0, o1))
     }
 
-    fn assert_equal<CS: ConstraintSystem<Self::E>>(
+    fn assert_equal<CS: ConstraintSystem<Self::Scalar>>(
         mut cs: CS,
         i0: &Self,
         i1: &Self,

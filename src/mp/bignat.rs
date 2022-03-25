@@ -1,8 +1,9 @@
+use bellperson::gadgets::boolean::AllocatedBit;
+use bellperson::gadgets::boolean::Boolean;
+use bellperson::gadgets::num::AllocatedNum;
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
+use ff::PrimeField;
 use rug::Integer;
-use sapling_crypto::bellman::pairing::ff::{Field, PrimeField};
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::circuit::boolean::Boolean;
 
 use std::borrow::Borrow;
 use std::cmp::{max, min, Ordering};
@@ -10,7 +11,6 @@ use std::convert::From;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 
-use super::exp::optimal_k;
 use super::poly::Polynomial;
 use util::bit::{Bit, Bitvector};
 use util::convert::{f_to_nat, nat_to_f};
@@ -21,7 +21,7 @@ use OptionExt;
 
 /// Compute the natural number represented by an array of limbs.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-pub fn limbs_to_nat<F: PrimeField, B: Borrow<F>, I: DoubleEndedIterator<Item = B>>(
+pub fn limbs_to_nat<Scalar: PrimeField, B: Borrow<Scalar>, I: DoubleEndedIterator<Item = B>>(
     limbs: I,
     limb_width: usize,
 ) -> Integer {
@@ -41,11 +41,11 @@ fn int_with_n_ones(n: usize) -> Integer {
 
 /// Compute the limbs encoding a natural number.
 /// The limbs are assumed to be based the `limb_width` power of 2.
-pub fn nat_to_limbs<'a, F: PrimeField>(
+pub fn nat_to_limbs<'a, Scalar: PrimeField>(
     nat: &Integer,
     limb_width: usize,
     n_limbs: usize,
-) -> Result<Vec<F>, SynthesisError> {
+) -> Result<Vec<Scalar>, SynthesisError> {
     let mask = int_with_n_ones(limb_width);
     let mut nat = nat.clone();
     if nat.significant_bits() as usize <= n_limbs * limb_width {
@@ -88,26 +88,26 @@ impl BigNatParams {
 
 /// A representation of a large natural number (a member of {0, 1, 2, ... })
 #[derive(Clone)]
-pub struct BigNat<E: Engine> {
+pub struct BigNat<Scalar: PrimeField> {
     /// The linear combinations which constrain the value of each limb of the number
-    pub limbs: Vec<LinearCombination<E>>,
+    pub limbs: Vec<LinearCombination<Scalar>>,
     /// The witness values for each limb (filled at witness-time)
-    pub limb_values: Option<Vec<E::Fr>>,
+    pub limb_values: Option<Vec<Scalar>>,
     /// The value of the whole number (filled at witness-time)
     pub value: Option<Integer>,
     /// Parameters
     pub params: BigNatParams,
 }
 
-impl<E: Engine> std::cmp::PartialEq for BigNat<E> {
+impl<Scalar: PrimeField> std::cmp::PartialEq for BigNat<Scalar> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value && self.params == other.params
     }
 }
-impl<E: Engine> std::cmp::Eq for BigNat<E> {}
+impl<Scalar: PrimeField> std::cmp::Eq for BigNat<Scalar> {}
 
-impl<E: Engine> From<BigNat<E>> for Polynomial<E> {
-    fn from(other: BigNat<E>) -> Polynomial<E> {
+impl<Scalar: PrimeField> From<BigNat<Scalar>> for Polynomial<Scalar> {
+    fn from(other: BigNat<Scalar>) -> Polynomial<Scalar> {
         Polynomial {
             coefficients: other.limbs,
             values: other.limb_values,
@@ -115,7 +115,7 @@ impl<E: Engine> From<BigNat<E>> for Polynomial<E> {
     }
 }
 
-impl<E: Engine> BigNat<E> {
+impl<Scalar: PrimeField> BigNat<Scalar> {
     /// Allocates a `BigNat` in the circuit with `n_limbs` limbs of width `limb_width` each.
     /// If `max_word` is missing, then it is assumed to be `(2 << limb_width) - 1`.
     /// The value is provided by a closure returning limb values.
@@ -127,8 +127,8 @@ impl<E: Engine> BigNat<E> {
         n_limbs: usize,
     ) -> Result<Self, SynthesisError>
     where
-        CS: ConstraintSystem<E>,
-        F: FnOnce() -> Result<Vec<E::Fr>, SynthesisError>,
+        CS: ConstraintSystem<Scalar>,
+        F: FnOnce() -> Result<Vec<Scalar>, SynthesisError>,
     {
         let values_cell = LazyCell::new(f);
         let mut value = None;
@@ -144,7 +144,7 @@ impl<E: Engine> BigNat<E> {
                                 return Err(SynthesisError::Unsatisfiable);
                             }
                             if value.is_none() {
-                                value = Some(limbs_to_nat::<E::Fr, _, _>(vs.iter(), limb_width));
+                                value = Some(limbs_to_nat::<Scalar, _, _>(vs.iter(), limb_width));
                             }
                             if limb_values.is_none() {
                                 limb_values = Some(vs.clone());
@@ -175,14 +175,14 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Creates a `BigNat` in the circuit from the given limbs.
-    pub fn from_limbs(limbs: Vec<Num<E>>, limb_width: usize) -> Self {
+    pub fn from_limbs(limbs: Vec<Num<Scalar>>, limb_width: usize) -> Self {
         let limb_values = limbs
             .iter()
             .map(|n| n.value)
-            .collect::<Option<Vec<E::Fr>>>();
+            .collect::<Option<Vec<Scalar>>>();
         let value = limb_values
             .as_ref()
-            .map(|values| limbs_to_nat::<E::Fr, _, _>(values.iter(), limb_width));
+            .map(|values| limbs_to_nat::<Scalar, _, _>(values.iter(), limb_width));
         let max_word = int_with_n_ones(limb_width);
         Self {
             params: BigNatParams {
@@ -210,11 +210,11 @@ impl<E: Engine> BigNat<E> {
         n_limbs: usize,
     ) -> Result<Self, SynthesisError>
     where
-        CS: ConstraintSystem<E>,
+        CS: ConstraintSystem<Scalar>,
         F: FnOnce() -> Result<Integer, SynthesisError>,
     {
         let all_values_cell = LazyCell::new(|| {
-            f().and_then(|v| Ok((nat_to_limbs::<E::Fr>(&v, limb_width, n_limbs)?, v)))
+            f().and_then(|v| Ok((nat_to_limbs::<Scalar>(&v, limb_width, n_limbs)?, v)))
                 .map_err(Rc::new)
         });
         let mut value = None;
@@ -253,7 +253,7 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
-    pub fn from_num(n: Num<E>, params: BigNatParams) -> Self {
+    pub fn from_num(n: Num<Scalar>, params: BigNatParams) -> Self {
         Self {
             value: n.value.as_ref().map(|n| f_to_nat(n)),
             limb_values: n.value.map(|v| vec![v]),
@@ -262,7 +262,7 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    pub fn as_limbs<CS: ConstraintSystem<E>>(&self) -> Vec<Num<E>> {
+    pub fn as_limbs<CS: ConstraintSystem<Scalar>>(&self) -> Vec<Num<Scalar>> {
         let mut limbs = Vec::new();
         for (i, lc) in self.limbs.iter().enumerate() {
             limbs.push(Num::new(
@@ -273,7 +273,7 @@ impl<E: Engine> BigNat<E> {
         limbs
     }
 
-    pub fn inputize<CS: ConstraintSystem<E>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
+    pub fn inputize<CS: ConstraintSystem<Scalar>>(&self, mut cs: CS) -> Result<(), SynthesisError> {
         for (i, l) in self.limbs.iter().enumerate() {
             let mut c = cs.namespace(|| format!("limb {}", i));
             let v = c.alloc_input(|| "alloc", || Ok(self.limb_values.as_ref().grab()?[i]))?;
@@ -283,7 +283,7 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Constrain `self` to be equal to `other`, assuming that they're both properly carried.
-    pub fn equal<CS: ConstraintSystem<E>>(
+    pub fn equal<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -312,12 +312,115 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
-    pub fn is_equal<CS: ConstraintSystem<E>>(
+    /// Takes two allocated numbers (a, b) and returns
+    /// allocated boolean variable with value `true`
+    /// if the `a` and `b` are equal, `false` otherwise.
+    pub fn equals<CS>(
+        mut cs: CS,
+        a: &AllocatedNum<Scalar>,
+        b: &AllocatedNum<Scalar>,
+    ) -> Result<Boolean, SynthesisError>
+    where
+        CS: ConstraintSystem<Scalar>,
+    {
+        // Allocate and constrain `r`: result boolean bit.
+        // It equals `true` if `a` equals `b`, `false` otherwise
+
+        let r_value = match (a.get_value(), b.get_value()) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+
+        let r = AllocatedBit::alloc(cs.namespace(|| "r"), r_value)?;
+
+        let delta = AllocatedNum::alloc(cs.namespace(|| "delta"), || {
+            let a_value = a.get_value().unwrap();
+            let b_value = b.get_value().unwrap();
+
+            let mut delta = a_value;
+            delta.sub_assign(&b_value);
+
+            Ok(delta)
+        })?;
+
+        //
+        cs.enforce(
+            || "delta = (a - b)",
+            |lc| lc + a.get_variable() - b.get_variable(),
+            |lc| lc + CS::one(),
+            |lc| lc + delta.get_variable(),
+        );
+
+        let delta_inv = AllocatedNum::alloc(cs.namespace(|| "delta_inv"), || {
+            let delta = delta.get_value().unwrap();
+
+            if delta.is_zero().unwrap_u8() == 0 {
+                Ok(Scalar::one()) // we can return any number here, it doesn't matter
+            } else {
+                Ok(delta.invert().unwrap())
+            }
+        })?;
+
+        // Allocate `t = delta * delta_inv`
+        // If `delta` is non-zero (a != b), `t` will equal 1
+        // If `delta` is zero (a == b), `t` cannot equal 1
+
+        let t = AllocatedNum::alloc(cs.namespace(|| "t"), || {
+            let mut tmp = delta.get_value().unwrap();
+            tmp.mul_assign(&(delta_inv.get_value().unwrap()));
+
+            Ok(tmp)
+        })?;
+
+        // Constrain allocation:
+        // t = (a - b) * delta_inv
+        cs.enforce(
+            || "t = (a - b) * delta_inv",
+            |lc| lc + a.get_variable() - b.get_variable(),
+            |lc| lc + delta_inv.get_variable(),
+            |lc| lc + t.get_variable(),
+        );
+
+        // Constrain:
+        // (a - b) * (t - 1) == 0
+        // This enforces that correct `delta_inv` was provided,
+        // and thus `t` is 1 if `(a - b)` is non zero (a != b )
+        cs.enforce(
+            || "(a - b) * (t - 1) == 0",
+            |lc| lc + a.get_variable() - b.get_variable(),
+            |lc| lc + t.get_variable() - CS::one(),
+            |lc| lc,
+        );
+
+        // Constrain:
+        // (a - b) * r == 0
+        // This enforces that `r` is zero if `(a - b)` is non-zero (a != b)
+        cs.enforce(
+            || "(a - b) * r == 0",
+            |lc| lc + a.get_variable() - b.get_variable(),
+            |lc| lc + r.get_variable(),
+            |lc| lc,
+        );
+
+        // Constrain:
+        // (t - 1) * (r - 1) == 0
+        // This enforces that `r` is one if `t` is not one (a == b)
+        cs.enforce(
+            || "(t - 1) * (r - 1) == 0",
+            |lc| lc + t.get_variable() - CS::one(),
+            |lc| lc + r.get_variable() - CS::one(),
+            |lc| lc,
+        );
+
+        Ok(Boolean::from(r))
+    }
+
+    pub fn is_equal<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
     ) -> Result<Boolean, SynthesisError> {
-        use sapling_crypto::circuit::num::{AllocatedNum, Num};
+        use bellperson::gadgets::num::Num;
         let mut rolling = Boolean::Constant(true);
         if self.limbs.len() != other.limbs.len() {
             eprintln!(
@@ -337,7 +440,7 @@ impl<E: Engine> BigNat<E> {
                 || format!("equal self {}", i),
                 |lc| lc,
                 |lc| lc,
-                |lc| lc - &Num::from(self_limb.clone()).lc(E::Fr::one()) + &self.limbs[i],
+                |lc| lc - &Num::from(self_limb.clone()).lc(Scalar::one()) + &self.limbs[i],
             );
             let other_limb = AllocatedNum::alloc(cs.namespace(|| format!("other {}", i)), || {
                 Ok(other.limb_values.as_ref().grab()?[i])
@@ -346,9 +449,14 @@ impl<E: Engine> BigNat<E> {
                 || format!("equal other {}", i),
                 |lc| lc,
                 |lc| lc,
-                |lc| lc - &Num::from(other_limb.clone()).lc(E::Fr::one()) + &other.limbs[i],
+                |lc| lc - &Num::from(other_limb.clone()).lc(Scalar::one()) + &other.limbs[i],
             );
-            let b = AllocatedNum::equals(
+            /*let b = AllocatedNum::equals(
+                cs.namespace(|| format!("eq {}", i)),
+                &self_limb,
+                &other_limb,
+            )?;*/
+            let b = Self::equals(
                 cs.namespace(|| format!("eq {}", i)),
                 &self_limb,
                 &other_limb,
@@ -358,7 +466,7 @@ impl<E: Engine> BigNat<E> {
         Ok(rolling)
     }
 
-    pub fn assert_well_formed<CS: ConstraintSystem<E>>(
+    pub fn assert_well_formed<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
     ) -> Result<(), SynthesisError> {
@@ -373,13 +481,13 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Break `self` up into a bit-vector.
-    pub fn decompose<CS: ConstraintSystem<E>>(
+    pub fn decompose<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
-    ) -> Result<Bitvector<E>, SynthesisError> {
+    ) -> Result<Bitvector<Scalar>, SynthesisError> {
         let limb_values_split =
             (0..self.limbs.len()).map(|i| self.limb_values.as_ref().map(|vs| vs[i]));
-        let bitvectors: Vec<Bitvector<E>> = self
+        let bitvectors: Vec<Bitvector<Scalar>> = self
             .limbs
             .iter()
             .zip(limb_values_split)
@@ -401,7 +509,7 @@ impl<E: Engine> BigNat<E> {
         Ok(Bitvector { bits, values })
     }
 
-    pub fn recompose(bv: &Bitvector<E>, limb_width: usize) -> Self {
+    pub fn recompose(bv: &Bitvector<Scalar>, limb_width: usize) -> Self {
         let nat = BigNat::from_limbs(
             bv.bits
                 .iter()
@@ -410,7 +518,7 @@ impl<E: Engine> BigNat<E> {
                     let val =
                         bv.values
                             .as_ref()
-                            .map(|v| if v[i] { E::Fr::one() } else { E::Fr::zero() });
+                            .map(|v| if v[i] { Scalar::one() } else { Scalar::zero() });
                     Num::new(val, bit.clone())
                 })
                 .collect(),
@@ -419,7 +527,7 @@ impl<E: Engine> BigNat<E> {
         nat.group_limbs(limb_width)
     }
 
-    pub fn enforce_full_bits<CS: ConstraintSystem<E>>(
+    pub fn enforce_full_bits<CS: ConstraintSystem<Scalar>>(
         &mut self,
         mut cs: CS,
     ) -> Result<(), SynthesisError> {
@@ -438,24 +546,24 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
-    pub fn enforce_min_bits<CS: ConstraintSystem<E>>(
+    pub fn enforce_min_bits<CS: ConstraintSystem<Scalar>>(
         &mut self,
         mut cs: CS,
         min_bits: usize,
     ) -> Result<(), SynthesisError> {
         let bits = self.decompose(cs.namespace(|| "decomp"))?.into_bits();
-        let upper_bits: Vec<Bit<E>> = bits.into_iter().skip(min_bits - 1).collect();
+        let upper_bits: Vec<Bit<Scalar>> = bits.into_iter().skip(min_bits - 1).collect();
         let inverse = cs.alloc(
             || "inverse",
             || {
                 Ok({
-                    let mut sum = E::Fr::zero();
+                    let mut sum = Scalar::zero();
                     for b in &upper_bits {
                         if *b.value.grab()? {
-                            sum.add_assign(&E::Fr::one());
+                            sum.add_assign(&Scalar::one());
                         }
                     }
-                    sum.inverse();
+                    sum = sum.invert().unwrap();
                     sum
                 })
             },
@@ -546,7 +654,7 @@ impl<E: Engine> BigNat<E> {
         new
     }
 
-    pub fn from_poly(poly: Polynomial<E>, limb_width: usize, max_word: Integer) -> Self {
+    pub fn from_poly(poly: Polynomial<Scalar>, limb_width: usize, max_word: Integer) -> Self {
         Self {
             params: BigNatParams {
                 min_bits: 0,
@@ -558,13 +666,13 @@ impl<E: Engine> BigNat<E> {
             value: poly
                 .values
                 .as_ref()
-                .map(|limb_values| limbs_to_nat::<E::Fr, _, _>(limb_values.iter(), limb_width)),
+                .map(|limb_values| limbs_to_nat::<Scalar, _, _>(limb_values.iter(), limb_width)),
             limb_values: poly.values,
         }
     }
 
     /// Constrain `self` to be equal to `other`, after carrying both.
-    pub fn equal_when_carried<CS: ConstraintSystem<E>>(
+    pub fn equal_when_carried<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -578,7 +686,7 @@ impl<E: Engine> BigNat<E> {
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits = (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
             + 0.1) as usize;
-        let mut carry_in = Num::new(Some(E::Fr::zero()), LinearCombination::zero());
+        let mut carry_in = Num::new(Some(Scalar::zero()), LinearCombination::zero());
 
         for i in 0..n {
             let carry = Num::alloc(cs.namespace(|| format!("carry value {}", i)), || {
@@ -645,7 +753,7 @@ impl<E: Engine> BigNat<E> {
     /// Constrain `self` to be equal to `other`, after carrying both.
     /// Uses regrouping internally to take full advantage of the field size and reduce the amount
     /// of carrying.
-    pub fn equal_when_carried_regroup<CS: ConstraintSystem<E>>(
+    pub fn equal_when_carried_regroup<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -654,14 +762,14 @@ impl<E: Engine> BigNat<E> {
         let max_word = std::cmp::max(&self.params.max_word, &other.params.max_word);
         let carry_bits = (((max_word.to_f64() * 2.0).log2() - self.params.limb_width as f64).ceil()
             + 0.1) as usize;
-        let limbs_per_group = (E::Fr::CAPACITY as usize - carry_bits) / self.params.limb_width;
+        let limbs_per_group = (Scalar::CAPACITY as usize - carry_bits) / self.params.limb_width;
         let self_grouped = self.group_limbs(limbs_per_group);
         let other_grouped = other.group_limbs(limbs_per_group);
         self_grouped.equal_when_carried(cs.namespace(|| "grouped"), &other_grouped)
     }
 
     // Constrain `self` to divide `other`.
-    pub fn divides<CS: ConstraintSystem<E>>(
+    pub fn divides<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -687,7 +795,7 @@ impl<E: Engine> BigNat<E> {
         self.verify_mult(cs.namespace(|| "multcheck"), &factor, &other)
     }
 
-    pub fn shift<CS: ConstraintSystem<E>>(&self, constant: E::Fr) -> BigNat<E> {
+    pub fn shift<CS: ConstraintSystem<Scalar>>(&self, constant: Scalar) -> BigNat<Scalar> {
         assert!(self.limbs.len() > 0);
         let mut new = self.clone();
         assert!(new.limbs.len() > 0);
@@ -700,11 +808,11 @@ impl<E: Engine> BigNat<E> {
             *v += f_to_nat(&constant);
         }
         new.params.max_word += f_to_nat(&constant);
-        assert!(new.params.max_word <= (Integer::from(1) << E::Fr::CAPACITY));
+        assert!(new.params.max_word <= (Integer::from(1) << Scalar::CAPACITY));
         new
     }
 
-    pub fn scale<CS: ConstraintSystem<E>>(&self, constant: E::Fr) -> BigNat<E> {
+    pub fn scale<CS: ConstraintSystem<Scalar>>(&self, constant: Scalar) -> BigNat<Scalar> {
         let mut new = self.clone();
         for limb in &mut new.limbs {
             *limb = LinearCombination::zero() + (constant, &*limb);
@@ -718,15 +826,15 @@ impl<E: Engine> BigNat<E> {
             *v *= f_to_nat(&constant);
         }
         new.params.max_word *= f_to_nat(&constant);
-        assert!(new.params.max_word <= (Integer::from(1) << E::Fr::CAPACITY));
+        assert!(new.params.max_word <= (Integer::from(1) << Scalar::CAPACITY));
         new
     }
 
-    pub fn sub<CS: ConstraintSystem<E>>(
+    pub fn sub<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         let diff = BigNat::alloc_from_nat(
             cs.namespace(|| "diff"),
             || {
@@ -742,11 +850,11 @@ impl<E: Engine> BigNat<E> {
         Ok(diff)
     }
 
-    pub fn mult<CS: ConstraintSystem<E>>(
+    pub fn mult<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "mult")?;
 
         let mut prod = BigNat::alloc_from_nat(
@@ -770,11 +878,14 @@ impl<E: Engine> BigNat<E> {
         Ok(prod)
     }
 
-    pub fn add<CS: ConstraintSystem<E>>(&self, other: &Self) -> Result<BigNat<E>, SynthesisError> {
+    pub fn add<CS: ConstraintSystem<Scalar>>(
+        &self,
+        other: &Self,
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "add")?;
         let n_limbs = max(self.params.n_limbs, other.params.n_limbs);
         let max_word = Integer::from(&self.params.max_word + &other.params.max_word);
-        let limbs: Vec<LinearCombination<E>> = (0..n_limbs)
+        let limbs: Vec<LinearCombination<Scalar>> = (0..n_limbs)
             .map(|i| match (self.limbs.get(i), other.limbs.get(i)) {
                 (Some(a), Some(b)) => a.clone() + b,
                 (Some(a), None) => a.clone(),
@@ -782,7 +893,7 @@ impl<E: Engine> BigNat<E> {
                 (None, None) => unreachable!(),
             })
             .collect();
-        let limb_values: Option<Vec<E::Fr>> = self.limb_values.as_ref().and_then(|x| {
+        let limb_values: Option<Vec<Scalar>> = self.limb_values.as_ref().and_then(|x| {
             other.limb_values.as_ref().map(|y| {
                 (0..n_limbs)
                     .map(|i| match (x.get(i), y.get(i)) {
@@ -815,7 +926,7 @@ impl<E: Engine> BigNat<E> {
         })
     }
 
-    pub fn min<CS: ConstraintSystem<E>>(
+    pub fn min<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -831,7 +942,7 @@ impl<E: Engine> BigNat<E> {
         Ok(lesser)
     }
 
-    fn verify_mult<CS: ConstraintSystem<E>>(
+    fn verify_mult<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -855,7 +966,7 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
-    pub fn enforce_coprime<CS: ConstraintSystem<E>>(
+    pub fn enforce_coprime<CS: ConstraintSystem<Scalar>>(
         &self,
         cs: CS,
         other: &Self,
@@ -864,7 +975,7 @@ impl<E: Engine> BigNat<E> {
         self.enforce_gcd(cs, other, &one)
     }
 
-    fn enforce_gcd<CS: ConstraintSystem<E>>(
+    fn enforce_gcd<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
@@ -899,11 +1010,11 @@ impl<E: Engine> BigNat<E> {
         Ok(())
     }
 
-    pub fn gcd<CS: ConstraintSystem<E>>(
+    pub fn gcd<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "gcd")?;
         let limb_width = self.params.limb_width;
         let n_limbs = min(self.params.n_limbs, other.params.n_limbs);
@@ -926,13 +1037,13 @@ impl<E: Engine> BigNat<E> {
         Ok(gcd)
     }
 
-    pub fn assert_product_mod<CS: ConstraintSystem<E>>(
+    pub fn assert_product_mod<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
         modulus: &Self,
         remainder: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         self.enforce_limb_width_agreement(other, "assert_product_mod, other")?;
         self.enforce_limb_width_agreement(modulus, "assert_product_mod, modulus")?;
         self.enforce_limb_width_agreement(remainder, "assert_product_mod, remainder")?;
@@ -985,12 +1096,12 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Compute a `BigNat` contrained to be equal to `self * other % modulus`.
-    pub fn mult_mod<CS: ConstraintSystem<E>>(
+    pub fn mult_mod<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
         modulus: &Self,
-    ) -> Result<(BigNat<E>, BigNat<E>), SynthesisError> {
+    ) -> Result<(BigNat<Scalar>, BigNat<Scalar>), SynthesisError> {
         self.enforce_limb_width_agreement(other, "mult_mod")?;
         let limb_width = self.params.limb_width;
         let quotient_bits =
@@ -1057,11 +1168,11 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Compute a `BigNat` contrained to be equal to `self * other % modulus`.
-    pub fn red_mod<CS: ConstraintSystem<E>>(
+    pub fn red_mod<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         modulus: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
+    ) -> Result<BigNat<Scalar>, SynthesisError> {
         self.enforce_limb_width_agreement(modulus, "red_mod")?;
         let limb_width = self.params.limb_width;
         let quotient_bits = self.n_bits().saturating_sub(modulus.params.min_bits);
@@ -1102,36 +1213,38 @@ impl<E: Engine> BigNat<E> {
     }
 
     /// Combines limbs into groups.
-    pub fn group_limbs(&self, limbs_per_group: usize) -> BigNat<E> {
+    pub fn group_limbs(&self, limbs_per_group: usize) -> BigNat<Scalar> {
         let n_groups = (self.limbs.len() - 1) / limbs_per_group + 1;
         let limb_values = self.limb_values.as_ref().map(|vs| {
-            let mut values: Vec<E::Fr> = vec![E::Fr::zero(); n_groups];
-            let mut shift = E::Fr::one();
-            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {
+            let mut values: Vec<Scalar> = vec![Scalar::zero(); n_groups];
+            let mut shift = Scalar::one();
+            let limb_block = (0..self.params.limb_width).fold(Scalar::one(), |mut l, _| {
                 l.double();
                 l
             });
             for (i, v) in vs.iter().enumerate() {
                 if i % limbs_per_group == 0 {
-                    shift = E::Fr::one();
+                    shift = Scalar::one();
                 }
                 let mut a = shift.clone();
-                a.mul_assign(&v);
+                // a.mul_assign(&v);
+                a = a * v;
                 values[i / limbs_per_group].add_assign(&a);
                 shift.mul_assign(&limb_block);
             }
             values
         });
         let limbs = {
-            let mut limbs: Vec<LinearCombination<E>> = vec![LinearCombination::zero(); n_groups];
-            let mut shift = E::Fr::one();
-            let limb_block = (0..self.params.limb_width).fold(E::Fr::one(), |mut l, _| {
+            let mut limbs: Vec<LinearCombination<Scalar>> =
+                vec![LinearCombination::zero(); n_groups];
+            let mut shift = Scalar::one();
+            let limb_block = (0..self.params.limb_width).fold(Scalar::one(), |mut l, _| {
                 l.double();
                 l
             });
             for (i, limb) in self.limbs.iter().enumerate() {
                 if i % limbs_per_group == 0 {
-                    shift = E::Fr::one();
+                    shift = Scalar::one();
                 }
                 limbs[i / limbs_per_group] =
                     std::mem::replace(&mut limbs[i / limbs_per_group], LinearCombination::zero())
@@ -1157,167 +1270,7 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    // NB: `exp` should have its bits *in reverse*. That is, the bit at index 0 is high order.
-    fn pow_mod_bin_rev<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        exp: Bitvector<E>,
-        modulus: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
-        fn bauer_power_bin_rev_helper<'a, E: Engine, CS: ConstraintSystem<E>>(
-            mut cs: CS,
-            base_powers: &[BigNat<E>],
-            k: usize,
-            mut exp_chunks: std::slice::Chunks<'a, Bit<E>>,
-            modulus: &BigNat<E>,
-        ) -> Result<BigNat<E>, SynthesisError> {
-            if let Some(chunk) = exp_chunks.next_back() {
-                let chunk_len = chunk.len();
-
-                if exp_chunks.len() > 0 {
-                    let mut acc = bauer_power_bin_rev_helper(
-                        cs.namespace(|| "rec"),
-                        base_powers,
-                        k,
-                        exp_chunks,
-                        modulus,
-                    )?;
-                    // Square once, for each bit in the chunk
-                    for j in 0..chunk_len {
-                        acc = acc
-                            .mult_mod(cs.namespace(|| format!("square {}", j)), &acc, &modulus)?
-                            .1;
-                    }
-                    // Select the correct base power
-                    let base_power = Gadget::mux_tree(
-                        cs.namespace(|| "select"),
-                        chunk.into_iter(),
-                        &base_powers[..(1 << chunk_len)],
-                    )?;
-                    Ok(acc
-                        .mult_mod(cs.namespace(|| "prod"), &base_power, &modulus)?
-                        .1)
-                } else {
-                    Gadget::mux_tree(
-                        cs.namespace(|| "select"),
-                        chunk.into_iter(),
-                        &base_powers[..(1 << chunk_len)],
-                    )
-                }
-            } else {
-                Ok(BigNat::one::<CS>(modulus.params.limb_width))
-            }
-        }
-        let k = optimal_k(exp.bits.len());
-        let base_powers = {
-            let mut base_powers = vec![BigNat::one::<CS>(modulus.params.limb_width), self.clone()];
-            for i in 2..(1 << k) {
-                base_powers.push(
-                    base_powers
-                        .last()
-                        .unwrap()
-                        .mult_mod(cs.namespace(|| format!("base {}", i)), self, modulus)?
-                        .1,
-                );
-            }
-            base_powers
-        };
-        bauer_power_bin_rev_helper(
-            cs.namespace(|| "helper"),
-            &base_powers,
-            k,
-            exp.into_bits().chunks(k),
-            modulus,
-        )
-    }
-
-    /// Computes a `BigNat` constrained to be equal to `self ** exp % modulus`.
-    pub fn pow_mod<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        exp: &Self,
-        modulus: &Self,
-    ) -> Result<BigNat<E>, SynthesisError> {
-        let exp_bin_rev = if exp.params.max_word >= Integer::from(1) << exp.params.limb_width as u32
-        {
-            let exp_carried = BigNat::alloc_from_nat(
-                cs.namespace(|| "exp carried"),
-                || Ok(exp.value.grab()?.clone()),
-                exp.params.limb_width,
-                exp.params.n_limbs,
-            )?;
-            exp_carried.equal_when_carried_regroup(cs.namespace(|| "carry check"), &exp)?;
-            exp_carried
-                .decompose(cs.namespace(|| "exp decomp"))?
-                .reversed()
-        } else {
-            exp.decompose(cs.namespace(|| "exp decomp"))?.reversed()
-        };
-        self.pow_mod_bin_rev(cs.namespace(|| "binary exp"), exp_bin_rev, modulus)
-    }
-
-    /// Assuming that the input is equivalent to 3 modulo 4, does a round of Miller-Rabin to check
-    /// for primality
-    fn miller_rabin_round<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        base: &Self,
-    ) -> Result<Boolean, SynthesisError> {
-        let bits = self.decompose(cs.namespace(|| "decomp"))?;
-        if bits.bits.len() < 3 {
-            eprintln!("Miller-Rabin too short");
-            return Err(SynthesisError::Unsatisfiable);
-        }
-        // Unwraps are safe b/c of len check above
-        bits.get(0)
-            .unwrap()
-            .constrain_value(cs.namespace(|| "odd"), true);
-        bits.get(1)
-            .unwrap()
-            .constrain_value(cs.namespace(|| "= 3 mod 4"), true);
-        let n_less_one = BigNat::recompose(&bits.clone().shr(1).shl(1), self.params.limb_width);
-        let one = BigNat::alloc_from_nat(
-            cs.namespace(|| "1"),
-            || Ok(Integer::from(1)),
-            self.params.limb_width,
-            self.limbs.len(),
-        )?;
-        // 2a + 1 == n
-        let a = BigNat::recompose(&bits.shr(1), self.params.limb_width);
-        // Check that b^a == 1 (mod self) OR
-        //            b^a == -1 (mod self)
-        let pow = base.pow_mod(cs.namespace(|| "b^a"), &a, self)?;
-        let is_1 = pow.is_equal(cs.namespace(|| "=1"), &n_less_one)?;
-        let is_neg_1 = pow.is_equal(cs.namespace(|| "=-1"), &one)?;
-        Ok(Boolean::and(cs.namespace(|| "or"), &is_1.not(), &is_neg_1.not())?.not())
-    }
-
-    fn miller_rabin_rounds<CS: ConstraintSystem<E>>(
-        &self,
-        mut cs: CS,
-        bases: &[usize],
-    ) -> Result<Boolean, SynthesisError> {
-        let mut rolling = Boolean::Constant(true);
-        for p in bases {
-            let big_p = Integer::from(*p);
-            if big_p.significant_bits() as usize > self.params.limb_width * self.limbs.len() {
-                eprintln!("miller_rabin_rounds");
-                return Err(SynthesisError::Unsatisfiable);
-            }
-            let base = BigNat::alloc_from_nat(
-                cs.namespace(|| format!("base {}", p)),
-                || Ok(big_p),
-                self.params.limb_width,
-                self.limbs.len(),
-            )?;
-            let round =
-                self.miller_rabin_round(cs.namespace(|| format!("mr round with {}", p)), &base)?;
-            rolling = Boolean::and(cs.namespace(|| format!("and {}", p)), &rolling, &round)?;
-        }
-        Ok(rolling)
-    }
-
-    pub fn with_n_limbs<CS: ConstraintSystem<E>>(&self, n_limbs: usize) -> Self {
+    pub fn with_n_limbs<CS: ConstraintSystem<Scalar>>(&self, n_limbs: usize) -> Self {
         match n_limbs.cmp(&self.params.n_limbs) {
             Ordering::Less => panic!("Tried to downsize the number of limbs!"),
             Ordering::Equal => self.clone(),
@@ -1326,7 +1279,7 @@ impl<E: Engine> BigNat<E> {
                 new.params.n_limbs = n_limbs;
                 new.limb_values.as_mut().map(|vs| {
                     while vs.len() < n_limbs {
-                        vs.push(E::Fr::zero())
+                        vs.push(Scalar::zero())
                     }
                 });
                 while new.limbs.len() < n_limbs {
@@ -1337,9 +1290,9 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    pub fn one<CS: ConstraintSystem<E>>(limb_width: usize) -> Self {
+    pub fn one<CS: ConstraintSystem<Scalar>>(limb_width: usize) -> Self {
         BigNat {
-            limb_values: Some({ vec![E::Fr::one()] }),
+            limb_values: Some(vec![Scalar::one()]),
             value: Some(Integer::from(1)),
             limbs: { vec![LinearCombination::zero() + CS::one()] },
             params: BigNatParams {
@@ -1351,33 +1304,6 @@ impl<E: Engine> BigNat<E> {
         }
     }
 
-    pub fn miller_rabin<CS: ConstraintSystem<E>>(
-        &self,
-        cs: CS,
-        n_rounds: usize,
-    ) -> Result<Boolean, SynthesisError> {
-        fn primes(n: usize) -> Vec<usize> {
-            let mut ps = vec![2];
-            let mut next = 3;
-            while ps.len() < n {
-                if !ps.iter().any(|p| next % p == 0) {
-                    ps.push(next);
-                }
-                next += 1;
-            }
-            ps
-        }
-        let ps = primes(n_rounds);
-        self.miller_rabin_rounds(cs, &ps)
-    }
-
-    pub fn miller_rabin_32b<CS: ConstraintSystem<E>>(
-        &self,
-        cs: CS,
-    ) -> Result<Boolean, SynthesisError> {
-        self.miller_rabin_rounds(cs, &[2, 7, 61])
-    }
-
     pub fn n_bits(&self) -> usize {
         assert!(self.params.n_limbs > 0);
         self.params.limb_width * (self.params.n_limbs - 1)
@@ -1385,12 +1311,12 @@ impl<E: Engine> BigNat<E> {
     }
 }
 
-impl<E: Engine> Gadget for BigNat<E> {
-    type E = E;
+impl<Scalar: PrimeField> Gadget for BigNat<Scalar> {
+    type Scalar = Scalar;
     type Value = Integer;
     type Params = BigNatParams;
     type Access = ();
-    fn alloc<CS: ConstraintSystem<E>>(
+    fn alloc<CS: ConstraintSystem<Scalar>>(
         cs: CS,
         value: Option<&Self::Value>,
         _access: (),
@@ -1406,21 +1332,21 @@ impl<E: Engine> Gadget for BigNat<E> {
     fn value(&self) -> Option<&Integer> {
         self.value.as_ref()
     }
-    fn wire_values(&self) -> Option<Vec<E::Fr>> {
+    fn wire_values(&self) -> Option<Vec<Scalar>> {
         self.limb_values.clone()
     }
     fn params(&self) -> &BigNatParams {
         &self.params
     }
-    fn wires(&self) -> Vec<LinearCombination<E>> {
+    fn wires(&self) -> Vec<LinearCombination<Scalar>> {
         self.limbs.clone()
     }
     fn access(&self) -> &() {
         &()
     }
-    fn mux<CS: ConstraintSystem<E>>(
+    fn mux<CS: ConstraintSystem<Scalar>>(
         mut cs: CS,
-        s: &Bit<E>,
+        s: &Bit<Scalar>,
         i0: &Self,
         i1: &Self,
     ) -> Result<Self, SynthesisError> {
@@ -1561,8 +1487,11 @@ mod tests {
         }, false),
     }
 
-    impl<E: Engine> Circuit<E> for Carrier {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<Scalar: PrimeField> Circuit<Scalar> for Carrier {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             if let Some(a) = self.inputs.as_ref().map(|i| &i.a) {
                 if a.len() != self.params.n_limbs {
                     eprintln!("Unsat: inputs/n_limbs mismatch a");
@@ -1640,8 +1569,11 @@ mod tests {
         params: MultModParameters,
     }
 
-    impl<E: Engine> Circuit<E> for MultMod {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<Scalar: PrimeField> Circuit<Scalar> for MultMod {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             let a = BigNat::alloc_from_nat(
                 cs.namespace(|| "a"),
                 || Ok(self.inputs.grab()?.a.clone()),
@@ -1859,8 +1791,11 @@ mod tests {
         params: NumberBitDecompParams,
     }
 
-    impl<E: Engine> Circuit<E> for NumberBitDecomp {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<Scalar: PrimeField> Circuit<Scalar> for NumberBitDecomp {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             let n = Num::alloc(cs.namespace(|| "n"), || {
                 Ok(nat_to_f(&self.inputs.grab()?.n).unwrap())
             })?;
@@ -1932,8 +1867,11 @@ mod tests {
         params: BigNatBitDecompParams,
     }
 
-    impl<E: Engine> Circuit<E> for BigNatBitDecomp {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<Scalar: PrimeField> Circuit<Scalar> for BigNatBitDecomp {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             let n = BigNat::alloc_from_nat(
                 cs.namespace(|| "n"),
                 || Ok(self.inputs.grab()?.n.clone()),
@@ -1947,6 +1885,7 @@ mod tests {
 
     #[quickcheck]
     fn big_nat_can_decompose(n: u32, limb_width: u8) -> TestResult {
+        use crate::util::scalar::Fr;
         let n = n as usize;
         if limb_width < 4 || limb_width > 200 {
             return TestResult::discard();
@@ -1966,7 +1905,7 @@ mod tests {
                 n_limbs,
             },
         };
-        let mut cs = TestConstraintSystem::<Bn256>::new();
+        let mut cs = TestConstraintSystem::<Fr>::new();
         circuit.synthesize(&mut cs).expect("synthesis failed");
         TestResult::from_bool(cs.is_satisfied())
     }
@@ -1977,411 +1916,6 @@ mod tests {
         pub e: &'a str,
         pub m: &'a str,
         pub res: &'a str,
-    }
-
-    pub struct PowModParams {
-        pub limb_width: usize,
-        pub n_limbs_b: usize,
-        pub n_limbs_e: usize,
-    }
-
-    pub struct PowMod<'a> {
-        inputs: Option<PowModInputs<'a>>,
-        params: PowModParams,
-    }
-
-    impl<'a, E: Engine> Circuit<E> for PowMod<'a> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let b = BigNat::alloc_from_nat(
-                cs.namespace(|| "b"),
-                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
-            )?;
-            let e = BigNat::alloc_from_nat(
-                cs.namespace(|| "e"),
-                || Ok(Integer::from_str(self.inputs.grab()?.e).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs_e,
-            )?;
-            let res = BigNat::alloc_from_nat(
-                cs.namespace(|| "res"),
-                || Ok(Integer::from_str(self.inputs.grab()?.res).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
-            )?;
-            let m = BigNat::alloc_from_nat(
-                cs.namespace(|| "m"),
-                || Ok(Integer::from_str(self.inputs.grab()?.m).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs_b,
-            )?;
-            let actual = b.pow_mod(cs.namespace(|| "pow"), &e, &m)?;
-            actual.equal(cs.namespace(|| "check"), &res)?;
-            Ok(())
-        }
-    }
-
-    circuit_tests! {
-        pow_mod_1_to_0: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "1",
-                                    e: "0",
-                                    m: "255",
-                                    res: "1",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_1_to_1: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "1",
-                                    e: "1",
-                                    m: "255",
-                                    res: "1",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_1_to_255: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "1",
-                                    e: "255",
-                                    m: "255",
-                                    res: "1",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_2_to_2: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 3,
-                                    n_limbs_e: 1,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "2",
-                                    e: "2",
-                                    m: "1255",
-                                    res: "4",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_16_to_2: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "16",
-                                    e: "2",
-                                    m: "255",
-                                    res: "1",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_16_to_5: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "16",
-                                    e: "5",
-                                    m: "255",
-                                    res: "16",
-                                }),
-                            },
-                            true
-                        ),
-                        pow_mod_16_to_255: (
-                            PowMod {
-                                params: PowModParams {
-                                    limb_width: 4,
-                                    n_limbs_b: 2,
-                                    n_limbs_e: 2,
-                                },
-                                inputs: Some(PowModInputs {
-                                    b: "16",
-                                    e: "254",
-                                    m: "255",
-                                    res: "1",
-                                }),
-                            },
-                            true
-                        ),
-                        // This is a production-sized test. On my machine it takes
-                        // ~5GB and 30s.
-                        //        pow_mod_16_to_255_2048x128: (
-                        //            PowMod {
-                        //                params: PowModParams {
-                        //                    limb_width: 32,
-                        //                    n_limbs_b: 64,
-                        //                    n_limbs_e: 4,
-                        //                },
-                        //                inputs: Some(PowModInputs {
-                        //                    b: "16",
-                        //                    e: "254",
-                        //                    m: "255",
-                        //                    res: "1",
-                        //                }),
-                        //            },
-                        //            true
-                        //        ),
-    }
-
-    #[derive(Debug)]
-    pub struct MillerRabinRoundInputs<'a> {
-        pub b: &'a str,
-        pub n: &'a str,
-        pub result: bool,
-    }
-
-    pub struct MillerRabinRoundParams {
-        pub limb_width: usize,
-        pub n_limbs: usize,
-    }
-
-    pub struct MillerRabinRound<'a> {
-        inputs: Option<MillerRabinRoundInputs<'a>>,
-        params: MillerRabinRoundParams,
-    }
-
-    impl<'a, E: Engine> Circuit<E> for MillerRabinRound<'a> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            use sapling_crypto::circuit::boolean::AllocatedBit;
-            let b = BigNat::alloc_from_nat(
-                cs.namespace(|| "b"),
-                || Ok(Integer::from_str(self.inputs.grab()?.b).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs,
-            )?;
-            let n = BigNat::alloc_from_nat(
-                cs.namespace(|| "n"),
-                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs,
-            )?;
-            let expected_res = Boolean::Is(AllocatedBit::alloc(
-                cs.namespace(|| "bit"),
-                self.inputs.map(|o| o.result),
-            )?);
-            let actual_res = n.miller_rabin_round(cs.namespace(|| "mr"), &b)?;
-            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
-            Ok(())
-        }
-    }
-
-    circuit_tests! {
-        mr_round_7_base_5: (
-                               MillerRabinRound {
-                                   params: MillerRabinRoundParams {
-                                       limb_width: 4,
-                                       n_limbs: 2,
-                                   },
-                                   inputs: Some(MillerRabinRoundInputs {
-                                       b: "5",
-                                       n: "7",
-                                       result: true,
-                                   }),
-                               },
-                               true),
-                               mr_round_11_base_2: (
-                                   MillerRabinRound {
-                                       params: MillerRabinRoundParams {
-                                           limb_width: 4,
-                                           n_limbs: 2,
-                                       },
-                                       inputs: Some(MillerRabinRoundInputs {
-                                           b: "2",
-                                           n: "11",
-                                           result: true,
-                                       }),
-                                   },
-                                   true),
-                                   mr_round_5_base_2: (
-                                       MillerRabinRound {
-                                           params: MillerRabinRoundParams {
-                                               limb_width: 4,
-                                               n_limbs: 2,
-                                           },
-                                           inputs: Some(MillerRabinRoundInputs {
-                                               b: "2",
-                                               n: "5",
-                                               result: true,
-                                           }),
-                                       },
-                                       false),
-                                       // ~80,000 constraints
-                                       mr_round_full_base_2: (
-                                           MillerRabinRound {
-                                               params: MillerRabinRoundParams {
-                                                   limb_width: 32,
-                                                   n_limbs: 4,
-                                               },
-                                               inputs: Some(MillerRabinRoundInputs {
-                                                   b: "2",
-                                                   n: "262215269494931243253999821294977607927",
-                                                   result: true,
-                                               }),
-                                           },
-                                           true),
-                                           mr_round_full_base_3: (
-                                               MillerRabinRound {
-                                                   params: MillerRabinRoundParams {
-                                                       limb_width: 32,
-                                                       n_limbs: 4,
-                                                   },
-                                                   inputs: Some(MillerRabinRoundInputs {
-                                                       b: "3",
-                                                       n: "262215269494931243253999821294977607927",
-                                                       result: true,
-                                                   }),
-                                               },
-                                               true),
-                                               mr_round_full_base_5: (
-                                                   MillerRabinRound {
-                                                       params: MillerRabinRoundParams {
-                                                           limb_width: 32,
-                                                           n_limbs: 4,
-                                                       },
-                                                       inputs: Some(MillerRabinRoundInputs {
-                                                           b: "5",
-                                                           n: "262215269494931243253999821294977607927",
-                                                           result: true,
-                                                       }),
-                                                   },
-                                                   true),
-                                                   mr_round_full_base_2_fail: (
-                                                       MillerRabinRound {
-                                                           params: MillerRabinRoundParams {
-                                                               limb_width: 32,
-                                                               n_limbs: 4,
-                                                           },
-                                                           inputs: Some(MillerRabinRoundInputs {
-                                                               b: "2",
-                                                               n: "304740101182592084246827883024894699479",
-                                                               result: false,
-                                                           }),
-                                                       },
-                                                       true),
-                                                       mr_round_full_base_3_fail: (
-                                                           MillerRabinRound {
-                                                               params: MillerRabinRoundParams {
-                                                                   limb_width: 32,
-                                                                   n_limbs: 4,
-                                                               },
-                                                               inputs: Some(MillerRabinRoundInputs {
-                                                                   b: "3",
-                                                                   n: "304740101182592084246827883024894699479",
-                                                                   result: false,
-                                                               }),
-                                                           },
-                                                           true),
-                                                           mr_round_full_base_5_fail: (
-                                                               MillerRabinRound {
-                                                                   params: MillerRabinRoundParams {
-                                                                       limb_width: 32,
-                                                                       n_limbs: 4,
-                                                                   },
-                                                                   inputs: Some(MillerRabinRoundInputs {
-                                                                       b: "5",
-                                                                       n: "304740101182592084246827883024894699479",
-                                                                       result: false,
-                                                                   }),
-                                                               },
-                                                               true),
-    }
-
-    #[derive(Debug)]
-    pub struct MillerRabinInputs<'a> {
-        pub n: &'a str,
-        pub result: bool,
-    }
-
-    pub struct MillerRabinParams {
-        pub limb_width: usize,
-        pub n_limbs: usize,
-        pub n_rounds: usize,
-    }
-
-    pub struct MillerRabin<'a> {
-        inputs: Option<MillerRabinInputs<'a>>,
-        params: MillerRabinParams,
-    }
-
-    impl<'a, E: Engine> Circuit<E> for MillerRabin<'a> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            use sapling_crypto::circuit::boolean::AllocatedBit;
-            let n = BigNat::alloc_from_nat(
-                cs.namespace(|| "n"),
-                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
-                self.params.limb_width,
-                self.params.n_limbs,
-            )?;
-            let expected_res = Boolean::Is(AllocatedBit::alloc(
-                cs.namespace(|| "bit"),
-                self.inputs.map(|o| o.result),
-            )?);
-            let actual_res = n.miller_rabin(cs.namespace(|| "mr"), self.params.n_rounds)?;
-            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
-            Ok(())
-        }
-    }
-
-    circuit_tests! {
-        mr_small_251: (
-                          MillerRabin {
-                              params: MillerRabinParams {
-                                  limb_width: 4,
-                                  n_limbs: 2,
-                                  n_rounds: 8,
-                              },
-                              inputs: Some(MillerRabinInputs {
-                                  n: "251",
-                                  result: true,
-                              }),
-                          },
-                          true),
-                          // ~640,000 constraints
-                          //mr_full: (
-                          //    MillerRabin {
-                          //        params: MillerRabinParams {
-                          //            limb_width: 32,
-                          //            n_limbs: 4,
-                          //            n_rounds: 8,
-                          //        },
-                          //        inputs: Some(MillerRabinInputs {
-                          //            n: "262215269494931243253999821294977607927",
-                          //            result: true,
-                          //        }),
-                          //    },
-                          //    true),
     }
 
     #[derive(Debug)]
@@ -2402,8 +1936,11 @@ mod tests {
         params: GcdParams,
     }
 
-    impl<'a, E: Engine> Circuit<E> for Gcd<'a> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<'a, Scalar: PrimeField> Circuit<Scalar> for Gcd<'a> {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             let a = BigNat::alloc_from_nat(
                 cs.namespace(|| "a"),
                 || Ok(Integer::from_str(self.inputs.grab()?.a).unwrap()),
@@ -2485,48 +2022,9 @@ mod tests {
                                  },
                                  true),
     }
-
-    #[derive(Debug)]
-    pub struct MillerRabin32Inputs<'a> {
-        pub n: &'a str,
-        pub result: bool,
-    }
-
-    pub struct MillerRabin32<'a> {
-        inputs: Option<MillerRabin32Inputs<'a>>,
-    }
-
-    impl<'a, E: Engine> Circuit<E> for MillerRabin32<'a> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-            use sapling_crypto::circuit::boolean::AllocatedBit;
-            let n = BigNat::alloc_from_nat(
-                cs.namespace(|| "n"),
-                || Ok(Integer::from_str(self.inputs.grab()?.n).unwrap()),
-                32,
-                1,
-            )?;
-            let expected_res = Boolean::Is(AllocatedBit::alloc(
-                cs.namespace(|| "bit"),
-                self.inputs.map(|o| o.result),
-            )?);
-            let actual_res = n.miller_rabin_32b(cs.namespace(|| "mr"))?;
-            Boolean::enforce_equal(cs.namespace(|| "eq"), &expected_res, &actual_res)?;
-            Ok(())
-        }
-    }
-    circuit_tests! {
-        mr_32: (
-                          MillerRabin32 {
-                              inputs: Some(MillerRabin32Inputs {
-                                  n: "251",
-                                  result: true,
-                              }),
-                          },
-                          true),
-    }
 }
 
-impl<E: Engine> Display for BigNat<E> {
+impl<Scalar: PrimeField> Display for BigNat<Scalar> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.value.as_ref() {
             Some(n) => write!(f, "BigNat({})", n),
@@ -2546,7 +2044,7 @@ impl Debug for BigNatParams {
     }
 }
 
-impl<E: Engine> Debug for BigNat<E> {
+impl<Scalar: PrimeField> Debug for BigNat<Scalar> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("BigNat")
             .field("params", &self.params)

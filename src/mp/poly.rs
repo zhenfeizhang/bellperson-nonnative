@@ -1,18 +1,17 @@
-use sapling_crypto::bellman::pairing::ff::Field;
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
+use ff::PrimeField;
 
 use std::cmp::max;
 use std::fmt::{self, Debug, Formatter};
 
 use OptionExt;
 
-pub struct Polynomial<E: Engine> {
-    pub coefficients: Vec<LinearCombination<E>>,
-    pub values: Option<Vec<E::Fr>>,
+pub struct Polynomial<Scalar: PrimeField> {
+    pub coefficients: Vec<LinearCombination<Scalar>>,
+    pub values: Option<Vec<Scalar>>,
 }
 
-impl<E: Engine> Debug for Polynomial<E> {
+impl<Scalar: PrimeField> Debug for Polynomial<Scalar> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("Polynomial")
             .field("values", &self.values)
@@ -20,11 +19,11 @@ impl<E: Engine> Debug for Polynomial<E> {
     }
 }
 
-impl<E: Engine> Polynomial<E> {
-    pub fn evaluate_at(&self, x: E::Fr) -> Option<E::Fr> {
+impl<Scalar: PrimeField> Polynomial<Scalar> {
+    pub fn evaluate_at(&self, x: Scalar) -> Option<Scalar> {
         self.values.as_ref().map(|vs| {
-            let mut v = E::Fr::one();
-            let mut acc = E::Fr::zero();
+            let mut v = Scalar::one();
+            let mut acc = Scalar::zero();
             for coeff in vs {
                 let mut t = coeff.clone();
                 t.mul_assign(&v);
@@ -34,15 +33,15 @@ impl<E: Engine> Polynomial<E> {
             acc
         })
     }
-    pub fn alloc_product<CS: ConstraintSystem<E>>(
+    pub fn alloc_product<CS: ConstraintSystem<Scalar>>(
         &self,
         mut cs: CS,
         other: &Self,
-    ) -> Result<Polynomial<E>, SynthesisError> {
+    ) -> Result<Polynomial<Scalar>, SynthesisError> {
         let n_product_coeffs = self.coefficients.len() + other.coefficients.len() - 1;
         let values = self.values.as_ref().and_then(|self_vs| {
             other.values.as_ref().map(|other_vs| {
-                let mut values: Vec<E::Fr> = std::iter::repeat_with(E::Fr::zero)
+                let mut values: Vec<Scalar> = std::iter::repeat_with(Scalar::zero)
                     .take(n_product_coeffs)
                     .collect();
                 for (self_i, self_v) in self_vs.iter().enumerate() {
@@ -60,19 +59,19 @@ impl<E: Engine> Polynomial<E> {
                 Ok(LinearCombination::zero()
                     + cs.alloc(|| format!("prod {}", i), || Ok(values.grab()?[i].clone()))?)
             })
-            .collect::<Result<Vec<LinearCombination<E>>, SynthesisError>>()?;
+            .collect::<Result<Vec<LinearCombination<Scalar>>, SynthesisError>>()?;
         let product = Polynomial {
             coefficients,
             values,
         };
-        let one = E::Fr::one();
-        let mut x = E::Fr::zero();
+        let one = Scalar::one();
+        let mut x = Scalar::zero();
         for _ in 1..(n_product_coeffs + 1) {
             x.add_assign(&one);
             cs.enforce(
-                || format!("pointwise product @ {}", x),
+                || format!("pointwise product @ {:?}", x),
                 |lc| {
-                    let mut i = E::Fr::one();
+                    let mut i = Scalar::one();
                     self.coefficients.iter().fold(lc, |lc, c| {
                         let r = lc + (i, c);
                         i.mul_assign(&x);
@@ -80,7 +79,7 @@ impl<E: Engine> Polynomial<E> {
                     })
                 },
                 |lc| {
-                    let mut i = E::Fr::one();
+                    let mut i = Scalar::one();
                     other.coefficients.iter().fold(lc, |lc, c| {
                         let r = lc + (i, c);
                         i.mul_assign(&x);
@@ -88,7 +87,7 @@ impl<E: Engine> Polynomial<E> {
                     })
                 },
                 |lc| {
-                    let mut i = E::Fr::one();
+                    let mut i = Scalar::one();
                     product.coefficients.iter().fold(lc, |lc, c| {
                         let r = lc + (i, c);
                         i.mul_assign(&x);
@@ -106,7 +105,7 @@ impl<E: Engine> Polynomial<E> {
             other.values.as_ref().map(|other_vs| {
                 (0..n_coeffs)
                     .map(|i| {
-                        let mut s = E::Fr::zero();
+                        let mut s = Scalar::zero();
                         if i < self_vs.len() {
                             s.add_assign(&self_vs[i]);
                         }
@@ -141,17 +140,20 @@ impl<E: Engine> Polynomial<E> {
 mod tests {
     use super::*;
     use crate::util::convert::usize_to_f;
-    use sapling_crypto::bellman::pairing::bn256::{Bn256, Fr};
-    use sapling_crypto::bellman::Circuit;
-    use sapling_crypto::circuit::test::TestConstraintSystem;
+    use crate::util::scalar::Fr;
+    use bellperson::gadgets::test::TestConstraintSystem;
+    use bellperson::Circuit;
 
-    pub struct PolynomialMultiplier<E: Engine> {
-        pub a: Vec<E::Fr>,
-        pub b: Vec<E::Fr>,
+    pub struct PolynomialMultiplier<Scalar: PrimeField> {
+        pub a: Vec<Scalar>,
+        pub b: Vec<Scalar>,
     }
 
-    impl<E: Engine> Circuit<E> for PolynomialMultiplier<E> {
-        fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    impl<Scalar: PrimeField> Circuit<Scalar> for PolynomialMultiplier<Scalar> {
+        fn synthesize<CS: ConstraintSystem<Scalar>>(
+            self,
+            cs: &mut CS,
+        ) -> Result<(), SynthesisError> {
             let a = Polynomial {
                 coefficients: self
                     .a
@@ -161,7 +163,7 @@ mod tests {
                         Ok(LinearCombination::zero()
                             + cs.alloc(|| format!("coeff_a {}", i), || Ok(*x))?)
                     })
-                    .collect::<Result<Vec<LinearCombination<E>>, SynthesisError>>()?,
+                    .collect::<Result<Vec<LinearCombination<Scalar>>, SynthesisError>>()?,
                 values: Some(self.a),
             };
             let b = Polynomial {
@@ -173,7 +175,7 @@ mod tests {
                         Ok(LinearCombination::zero()
                             + cs.alloc(|| format!("coeff_b {}", i), || Ok(*x))?)
                     })
-                    .collect::<Result<Vec<LinearCombination<E>>, SynthesisError>>()?,
+                    .collect::<Result<Vec<LinearCombination<Scalar>>, SynthesisError>>()?,
                 values: Some(self.b),
             };
             let _prod = Polynomial::from(a)
@@ -184,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_circuit() {
-        let mut cs = TestConstraintSystem::<Bn256>::new();
+        let mut cs = TestConstraintSystem::<Fr>::new();
 
         let circuit = PolynomialMultiplier {
             a: [1, 1, 1].iter().map(|i| usize_to_f::<Fr>(*i)).collect(),

@@ -1,8 +1,7 @@
 // (mostly from franklin-crypto)
-use sapling_crypto::bellman::pairing::ff::Field;
-use sapling_crypto::bellman::pairing::Engine;
-use sapling_crypto::bellman::{ConstraintSystem, LinearCombination, SynthesisError};
-use sapling_crypto::circuit::boolean::Boolean;
+use bellperson::gadgets::boolean::Boolean;
+use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
+use ff::PrimeField;
 
 use std::fmt::{self, Display, Formatter};
 
@@ -10,23 +9,23 @@ use OptionExt;
 
 #[derive(Clone)]
 /// A representation of a bit
-pub struct Bit<E: Engine> {
+pub struct Bit<Scalar: PrimeField> {
     /// The linear combination which constrain the value of the bit
-    pub bit: LinearCombination<E>,
+    pub bit: LinearCombination<Scalar>,
     /// The value of the bit (filled at witness-time)
     pub value: Option<bool>,
 }
 
 #[derive(Clone)]
 /// A representation of a bit-vector
-pub struct Bitvector<E: Engine> {
+pub struct Bitvector<Scalar: PrimeField> {
     /// The linear combination which constrain the values of the bits
-    pub bits: Vec<LinearCombination<E>>,
+    pub bits: Vec<LinearCombination<Scalar>>,
     /// The value of the bits (filled at witness-time)
     pub values: Option<Vec<bool>>,
 }
 
-impl<E: Engine> Bitvector<E> {
+impl<Scalar: PrimeField> Bitvector<Scalar> {
     /// Reverse the order of the bits
     pub fn reversed(mut self) -> Self {
         self.values.as_mut().map(|v| v.reverse());
@@ -40,7 +39,7 @@ impl<E: Engine> Bitvector<E> {
         self
     }
 
-    pub fn get(&self, i: usize) -> Option<Bit<E>> {
+    pub fn get(&self, i: usize) -> Option<Bit<Scalar>> {
         self.bits.get(i).map(|lc| Bit {
             bit: lc.clone(),
             value: self.values.as_ref().map(|vs| vs[i].clone()),
@@ -64,13 +63,13 @@ impl<E: Engine> Bitvector<E> {
         self
     }
 
-    pub fn split_off(&mut self, n_bits: usize) -> Bitvector<E> {
+    pub fn split_off(&mut self, n_bits: usize) -> Bitvector<Scalar> {
         let bits = self.bits.split_off(n_bits);
         let values = self.values.as_mut().map(|vs| vs.split_off(n_bits));
         Bitvector { bits, values }
     }
 
-    pub fn pop(&mut self) -> Option<Bit<E>> {
+    pub fn pop(&mut self) -> Option<Bit<Scalar>> {
         if self.bits.len() > 0 {
             Some(Bit::new(
                 self.bits.pop().unwrap(),
@@ -81,14 +80,14 @@ impl<E: Engine> Bitvector<E> {
         }
     }
 
-    pub fn push(&mut self, mut b: Bit<E>) {
+    pub fn push(&mut self, mut b: Bit<Scalar>) {
         self.values
             .as_mut()
             .map(|vs| b.value.take().map(|v| vs.push(v)));
         self.bits.push(b.bit);
     }
 
-    pub fn insert(&mut self, i: usize, mut b: Bit<E>) {
+    pub fn insert(&mut self, i: usize, mut b: Bit<Scalar>) {
         self.values
             .as_mut()
             .map(|vs| b.value.take().map(|v| vs.insert(i, v)));
@@ -103,7 +102,7 @@ impl<E: Engine> Bitvector<E> {
             .map(|vs| ovs.map(|ovs| vs.extend(ovs.into_iter())));
     }
 
-    pub fn into_bits(mut self) -> Vec<Bit<E>> {
+    pub fn into_bits(mut self) -> Vec<Bit<Scalar>> {
         let vs = self.values.take();
         self.bits
             .into_iter()
@@ -115,7 +114,7 @@ impl<E: Engine> Bitvector<E> {
             .collect()
     }
 
-    pub fn from_bits(bs: Vec<Bit<E>>) -> Self {
+    pub fn from_bits(bs: Vec<Bit<Scalar>>) -> Self {
         let mut bits = Vec::new();
         let mut values = Some(Vec::new());
         for mut b in bs {
@@ -132,20 +131,20 @@ impl<E: Engine> Bitvector<E> {
     }
 }
 
-impl<E: Engine> Bit<E> {
+impl<Scalar: PrimeField> Bit<Scalar> {
     /// Allocate a variable in the constraint system which can only be a
     /// boolean value.
     pub fn alloc<CS>(mut cs: CS, value: Option<bool>) -> Result<Self, SynthesisError>
     where
-        CS: ConstraintSystem<E>,
+        CS: ConstraintSystem<Scalar>,
     {
         let var = cs.alloc(
             || "boolean",
             || {
                 if *value.grab()? {
-                    Ok(E::Fr::one())
+                    Ok(Scalar::one())
                 } else {
-                    Ok(E::Fr::zero())
+                    Ok(Scalar::zero())
                 }
             },
         )?;
@@ -167,7 +166,7 @@ impl<E: Engine> Bit<E> {
 
     pub fn constrain_value<CS>(&self, mut cs: CS, value: bool)
     where
-        CS: ConstraintSystem<E>,
+        CS: ConstraintSystem<Scalar>,
     {
         cs.enforce(
             || format!("is {}", value),
@@ -183,30 +182,30 @@ impl<E: Engine> Bit<E> {
         );
     }
 
-    pub fn new(bit: LinearCombination<E>, value: Option<bool>) -> Self {
+    pub fn new(bit: LinearCombination<Scalar>, value: Option<bool>) -> Self {
         Self { bit, value }
     }
 
-    pub fn from_sapling<CS: ConstraintSystem<E>>(b: Boolean) -> Self {
-        Self::new(b.lc(CS::one(), E::Fr::one()), b.get_value())
+    pub fn from_sapling<CS: ConstraintSystem<Scalar>>(b: Boolean) -> Self {
+        Self::new(b.lc(CS::one(), Scalar::one()), b.get_value())
     }
 
-    pub fn not<CS: ConstraintSystem<E>>(&self) -> Self {
+    pub fn not<CS: ConstraintSystem<Scalar>>(&self) -> Self {
         Self::new(
             LinearCombination::zero() + CS::one() - &self.bit,
             self.value.clone().map(|b| !b),
         )
     }
 
-    pub fn new_false<CS: ConstraintSystem<E>>() -> Self {
+    pub fn new_false<CS: ConstraintSystem<Scalar>>() -> Self {
         Self::new(LinearCombination::zero(), Some(false))
     }
 
-    pub fn new_true<CS: ConstraintSystem<E>>() -> Self {
+    pub fn new_true<CS: ConstraintSystem<Scalar>>() -> Self {
         Self::new(LinearCombination::zero() + CS::one(), Some(true))
     }
 
-    pub fn new_value<CS: ConstraintSystem<E>>(v: bool) -> Self {
+    pub fn new_value<CS: ConstraintSystem<Scalar>>(v: bool) -> Self {
         if v {
             Self::new_true::<CS>()
         } else {
@@ -215,7 +214,7 @@ impl<E: Engine> Bit<E> {
     }
 }
 
-impl<E: Engine> Display for Bitvector<E> {
+impl<Scalar: PrimeField> Display for Bitvector<Scalar> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.values.as_ref() {
             Some(vs) => write!(
