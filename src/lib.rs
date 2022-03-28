@@ -2,17 +2,9 @@
 #![feature(test)]
 
 extern crate bellperson;
-extern crate bincode;
-extern crate derivative;
 extern crate ff;
-extern crate flate2;
-extern crate fnv;
-extern crate gmp_mpfr_sys;
 extern crate rand;
-extern crate rayon;
 extern crate rug;
-extern crate serde;
-extern crate sha2;
 extern crate test;
 
 #[cfg(test)]

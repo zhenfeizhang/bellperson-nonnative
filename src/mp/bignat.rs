@@ -451,11 +451,7 @@ impl<Scalar: PrimeField> BigNat<Scalar> {
                 |lc| lc,
                 |lc| lc - &Num::from(other_limb.clone()).lc(Scalar::one()) + &other.limbs[i],
             );
-            /*let b = AllocatedNum::equals(
-                cs.namespace(|| format!("eq {}", i)),
-                &self_limb,
-                &other_limb,
-            )?;*/
+
             let b = Self::equals(
                 cs.namespace(|| format!("eq {}", i)),
                 &self_limb,

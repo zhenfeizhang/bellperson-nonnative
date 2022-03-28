@@ -1,9 +1,9 @@
+use byteorder::WriteBytesExt;
 use ff::PrimeField;
 use rug::{integer::Order, Integer};
 use std::io::{self, Write};
 
 fn write_be<F: PrimeField, W: Write>(f: &F, mut writer: W) -> io::Result<()> {
-    use byteorder::WriteBytesExt;
     for digit in f.to_repr().as_ref().iter().rev() {
         writer.write_u8(*digit)?;
     }
