@@ -1771,6 +1771,22 @@ mod tests {
                 r: Integer::from(120usize),
             }),
         }, true),
+        mult_mod_pallas: ( MultMod {
+          params: MultModParameters {
+            limb_width: 32,
+            n_limbs_a: 8,
+            n_limbs_b: 8,
+            n_limbs_m: 8,
+            full_m: false,
+          },
+          inputs: Some(MultModInputs {
+            a: Integer::from_str_radix("11572336752428856981970994795408771577024165681374400871001196932361466228192", 10).unwrap(),
+            b: Integer::from_str_radix("87673389408848523602668121701204553693362841135953267897017930941776218798802", 10).unwrap(),
+            m: Integer::from_str_radix("40000000000000000000000000000000224698fc094cf91b992d30ed00000001", 16).unwrap(),
+            q: Integer::from_str_radix("35048542371029440058224000662033175648615707461806414787901284501179083518342", 10).unwrap(),
+            r: Integer::from_str_radix("26362617993085418618858432307761590013874563896298265114483698919121453084730", 10).unwrap(),
+          })
+        }, true),
     }
 
     #[derive(Debug)]
