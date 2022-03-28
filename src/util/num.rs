@@ -2,10 +2,9 @@ use bellperson::gadgets::num::AllocatedNum;
 use bellperson::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use ff::PrimeField;
 
-use std::convert::From;
-
 use super::bit::{Bit, Bitvector};
-
+use std::convert::From;
+use BitAccess;
 use OptionExt;
 
 pub struct Num<Scalar: PrimeField> {
@@ -45,20 +44,16 @@ impl<Scalar: PrimeField> Num<Scalar> {
         mut cs: CS,
         n_bits: usize,
     ) -> Result<(), SynthesisError> {
-        let mut repr = self.value.map(|v| v.to_repr());
+        let v = self.value.map(|v| v).unwrap();
+
         // Allocate all but the first bit.
         let bits: Vec<Variable> = (1..n_bits)
             .map(|i| {
                 cs.alloc(
                     || format!("bit {}", i),
                     || {
-                        let t = repr.grab_mut()?;
-                        t.shr(1);
-                        let r = if t.is_odd() {
-                            Scalar::one()
-                        } else {
-                            Scalar::zero()
-                        };
+                        let bit = v.get_bit(i).unwrap();
+                        let r = if bit { Scalar::one() } else { Scalar::zero() };
                         Ok(r)
                     },
                 )
@@ -81,7 +76,7 @@ impl<Scalar: PrimeField> Num<Scalar> {
                 let mut f = Scalar::one();
                 lc = lc + &self.num;
                 for v in bits.iter() {
-                    f.double();
+                    f = f.double();
                     lc = lc - (f, *v);
                 }
                 lc
@@ -91,7 +86,7 @@ impl<Scalar: PrimeField> Num<Scalar> {
                 let mut f = Scalar::one();
                 lc = lc - &self.num;
                 for v in bits.iter() {
-                    f.double();
+                    f = f.double();
                     lc = lc + (f, *v);
                 }
                 lc
@@ -110,11 +105,10 @@ impl<Scalar: PrimeField> Num<Scalar> {
         n_bits: usize,
     ) -> Result<Bitvector<Scalar>, SynthesisError> {
         let values: Option<Vec<bool>> = self.value.as_ref().map(|v| {
-            let mut num = v.to_repr();
+            let num = v.clone();
             (0..n_bits)
-                .map(|_| {
-                    let bit = num.is_odd();
-                    num.shr(1);
+                .map(|i| {
+                    let bit = num.get_bit(i).unwrap();
                     bit
                 })
                 .collect()
@@ -131,7 +125,7 @@ impl<Scalar: PrimeField> Num<Scalar> {
         let sum_of_tail_bits = allocations
             .iter()
             .fold(LinearCombination::zero(), |lc, bit| {
-                f.double();
+                f = f.double();
                 lc + (f, &bit.bit)
             });
         let bit0_lc = LinearCombination::zero() + &self.num - &sum_of_tail_bits;

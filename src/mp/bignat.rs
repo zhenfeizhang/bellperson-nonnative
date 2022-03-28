@@ -1219,7 +1219,7 @@ impl<Scalar: PrimeField> BigNat<Scalar> {
             let mut values: Vec<Scalar> = vec![Scalar::zero(); n_groups];
             let mut shift = Scalar::one();
             let limb_block = (0..self.params.limb_width).fold(Scalar::one(), |mut l, _| {
-                l.double();
+                l = l.double();
                 l
             });
             for (i, v) in vs.iter().enumerate() {
@@ -1239,7 +1239,7 @@ impl<Scalar: PrimeField> BigNat<Scalar> {
                 vec![LinearCombination::zero(); n_groups];
             let mut shift = Scalar::one();
             let limb_block = (0..self.params.limb_width).fold(Scalar::one(), |mut l, _| {
-                l.double();
+                l = l.double();
                 l
             });
             for (i, limb) in self.limbs.iter().enumerate() {
