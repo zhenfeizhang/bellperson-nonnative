@@ -44,7 +44,7 @@ impl<Scalar: PrimeField> Num<Scalar> {
         mut cs: CS,
         n_bits: usize,
     ) -> Result<(), SynthesisError> {
-        let v = self.value.map(|v| v).unwrap();
+        let v = self.value.map(|v| v);
 
         // Allocate all but the first bit.
         let bits: Vec<Variable> = (1..n_bits)
@@ -52,8 +52,11 @@ impl<Scalar: PrimeField> Num<Scalar> {
                 cs.alloc(
                     || format!("bit {}", i),
                     || {
-                        let bit = v.get_bit(i).unwrap();
-                        let r = if bit { Scalar::one() } else { Scalar::zero() };
+                        let r = if *v.grab()?.get_bit(i).grab()? {
+                            Scalar::one()
+                        } else {
+                            Scalar::zero()
+                        };
                         Ok(r)
                     },
                 )
