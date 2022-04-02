@@ -253,14 +253,38 @@ impl<Scalar: PrimeField> BigNat<Scalar> {
         })
     }
 
-    pub fn from_num(n: Num<Scalar>, params: BigNatParams) -> Self {
-        Self {
-            value: n.value.as_ref().map(|n| f_to_nat(n)),
-            limb_values: n.value.map(|v| vec![v]),
-            limbs: vec![n.num],
-            params,
-        }
+    /// Allocates a `BigNat` in the circuit with `n_limbs` limbs of width `limb_width` each.
+    /// The `max_word` is gauranteed to be `(2 << limb_width) - 1`.
+    /// The value is provided by an allocated number
+    pub fn from_num<CS: ConstraintSystem<Scalar>>(
+        cs: CS,
+        n: Num<Scalar>,
+        limb_width: usize,
+        n_limbs: usize,
+    ) -> Result<Self, SynthesisError> {
+        Self::alloc_from_nat(
+            cs,
+            || {
+                Ok({
+                    n.value
+                        .as_ref()
+                        .map(|n| f_to_nat(n))
+                        .ok_or(SynthesisError::AssignmentMissing)?
+                })
+            },
+            limb_width,
+            n_limbs,
+        )
     }
+
+    // pub fn from_num(n: Num<Scalar>, params: BigNatParams) -> Self {
+    //    Self {
+    //         value: n.value.as_ref().map(|n| f_to_nat(n)),
+    //         limb_values: n.value.map(|v| vec![v]),
+    //         limbs: vec![n.num],
+    //         params,
+    //     }
+    // }
 
     pub fn as_limbs<CS: ConstraintSystem<Scalar>>(&self) -> Vec<Num<Scalar>> {
         let mut limbs = Vec::new();
