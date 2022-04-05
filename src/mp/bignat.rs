@@ -1343,12 +1343,8 @@ impl<Scalar: PrimeField> Gadget for BigNat<Scalar> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use util::test_helpers::*;
-
     use quickcheck::TestResult;
-
-    use std::str::FromStr;
     use util::convert::usize_to_f;
 
     pub struct CarrierInputs {
