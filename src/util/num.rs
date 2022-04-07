@@ -99,6 +99,27 @@ impl<Scalar: PrimeField> Num<Scalar> {
         Ok(())
     }
 
+    /// Computes the natural number represented by an array of bits.
+    /// Checks if the natural number equals `self`
+    pub fn is_equal<CS: ConstraintSystem<Scalar>>(
+        &self,
+        mut cs: CS,
+        other: &Bitvector<Scalar>,
+    ) -> Result<(), SynthesisError> {
+        let allocations = other.allocations.clone();
+        let mut f = Scalar::one();
+        let sum = allocations
+            .iter()
+            .fold(LinearCombination::zero(), |lc, bit| {
+                let l = lc + (f, &bit.bit);
+                f = f.double();
+                l
+            });
+        let sum_lc = LinearCombination::zero() + &self.num - &sum;
+        cs.enforce(|| "sum", |lc| lc + &sum_lc, |lc| lc + CS::one(), |lc| lc);
+        Ok(())
+    }
+
     /// Compute the natural number represented by an array of limbs.
     /// The limbs are assumed to be based the `limb_width` power of 2.
     /// Low-index bits are low-order
@@ -116,7 +137,7 @@ impl<Scalar: PrimeField> Num<Scalar> {
                 })
                 .collect()
         });
-        let allocations: Vec<Bit<Scalar>> = (1..n_bits)
+        let allocations: Vec<Bit<Scalar>> = (0..n_bits)
             .map(|bit_i| {
                 Bit::alloc(
                     cs.namespace(|| format!("bit{}", bit_i)),
@@ -125,27 +146,25 @@ impl<Scalar: PrimeField> Num<Scalar> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut f = Scalar::one();
-        let sum_of_tail_bits = allocations
+        let sum = allocations
             .iter()
             .fold(LinearCombination::zero(), |lc, bit| {
+                let l = lc + (f, &bit.bit);
                 f = f.double();
-                lc + (f, &bit.bit)
+                l
             });
-        let bit0_lc = LinearCombination::zero() + &self.num - &sum_of_tail_bits;
-        cs.enforce(
-            || "sum",
-            |lc| lc + &bit0_lc,
-            |lc| lc + CS::one() - &bit0_lc,
-            |lc| lc,
-        );
-        let bits: Vec<LinearCombination<Scalar>> = std::iter::once(bit0_lc)
-            .chain(
-                allocations
-                    .into_iter()
-                    .map(|a| LinearCombination::zero() + &a.bit),
-            )
+        let sum_lc = LinearCombination::zero() + &self.num - &sum;
+        cs.enforce(|| "sum", |lc| lc + &sum_lc, |lc| lc + CS::one(), |lc| lc);
+        let bits: Vec<LinearCombination<Scalar>> = allocations
+            .clone()
+            .into_iter()
+            .map(|a| LinearCombination::zero() + &a.bit)
             .collect();
-        Ok(Bitvector { values, bits })
+        Ok(Bitvector {
+            allocations,
+            values,
+            bits,
+        })
     }
 
     pub fn as_sapling_allocated_num<CS: ConstraintSystem<Scalar>>(
