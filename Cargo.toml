@@ -1,6 +1,10 @@
 [package]
 name = "bellperson-nonnative"
 version = "0.1.0"
+description = "Non-native arithmetic for SNARKs"
+documentation = "https://docs.rs/bellperson-nonnative"
+license-file = "LICENSE"
+keywords = ["zkSNARKs", "cryptography", "proofs"]
 
 [dependencies]
 rand = "0.4"
