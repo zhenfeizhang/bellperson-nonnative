@@ -1,5 +1,6 @@
 #![feature(hash_raw_entry)]
 #![feature(test)]
+#![feature(const_fn_trait_bound)]
 
 extern crate bellperson;
 extern crate ff;
