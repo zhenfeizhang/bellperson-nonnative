@@ -1,11 +1,7 @@
-#![feature(hash_raw_entry)]
-#![feature(test)]
-
 extern crate bellperson;
 extern crate ff;
 extern crate rand;
 extern crate rug;
-extern crate test;
 
 #[cfg(test)]
 extern crate quickcheck;
