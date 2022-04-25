@@ -1,6 +1,6 @@
 [package]
 name = "bellperson-nonnative"
-version = "0.2.0"
+version = "0.2.1"
 description = "Non-native arithmetic for SNARKs"
 documentation = "https://docs.rs/bellperson-nonnative"
 license-file = "LICENSE"
